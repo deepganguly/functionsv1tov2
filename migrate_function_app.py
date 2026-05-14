@@ -4,14 +4,14 @@ Complete workflow: Export v1 Function App metadata and deploy as v2.
 
 This script orchestrates the entire process:
 1. Export v1 Function App metadata from Azure
-2. Transform it to v2-compatible format
-3. Deploy the v2 Function App
-
-Usage:
-    python migrate_function_app.py \
-        --source-subscription-id <SOURCE_SUBSCRIPTION_ID> \
-        --target-subscription-id <TARGET_SUBSCRIPTION_ID> \
-        --source-rg <SOURCE_RG> \
+        print("  python migrate_function_app.py")
+        print(f"    --source-subscription-id {source_subscription_id}")
+        print(f"    --target-subscription-id {target_subscription_id}")
+        print(f"    --source-rg {source_rg}")
+        print(f"    --source-app {source_app}")
+        print(f"    --target-rg {target_rg}")
+        print(f"    --target-app {target_app}")
+        print("    --environment-id <MANAGED_ENV_ID>")
         --source-app <SOURCE_APP_NAME> \
         print(f"    --source-subscription-id {source_subscription_id} \\\")
         print(f"    --target-subscription-id {target_subscription_id} \\\")
