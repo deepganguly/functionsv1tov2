@@ -51,20 +51,33 @@ python migrate_function_app.py \
 - Preserves app settings.
 - Preserves ingress behavior by enabling external ingress when source app is publicly reachable.
 
-## Advantages of Same-Subscription Migrations
+## Same vs Different Subscription: What Is Possible
 
-- **Dependency Reuse**: Existing resources such as storage accounts, service bus, and app insights can be reused without additional configuration.
-- **Identity and RBAC**: Managed identities and role assignments are preserved, reducing manual intervention.
-- **Networking**: VNet integrations and private endpoints remain intact, ensuring seamless connectivity.
-- **Cost Efficiency**: Avoids duplication of resources, leading to reduced operational costs.
+The script always migrates app metadata and deploys a new target Function App on Azure Container Apps. Other resources depend on migration type.
 
-## Points to Note
+### Current Script Behavior (Automatic)
 
-For same-subscription migrations, the following configurations and resources can be preserved or reused:
+- Exports source Function App metadata and app settings.
+- Transforms settings for v2 target shape.
+- Deploys target app as `Microsoft.App/containerApps` with `kind=functionapp`.
+- Preserves ingress default behavior based on source public reachability.
 
-- **Identity**: Managed identity assignments and RBAC roles are preserved, avoiding the need for reconfiguration.
-- **Networking**: VNet integrations, private endpoints, IP restrictions, and NSGs remain intact, ensuring seamless connectivity.
-- **Key Vault References**: Key Vault references can be reused if the Key Vault exists in the same subscription and the target app has the necessary access permissions.
-- **Connection Strings**: Connection strings can be reused if the referenced resources (e.g., databases, storage accounts) are in the same subscription and accessible from the target environment.
-- **Diagnostic Settings and Alerts**: Diagnostic settings and alerts can be preserved if the monitoring resources (e.g., Log Analytics workspace, Application Insights) are in the same subscription.
-- **Custom Domains and Certificates**: Custom domains and certificates can be reused if the DNS and certificate resources are managed within the same subscription.
+### Capability Matrix
+
+| Area | Same Subscription | Different Subscription |
+|---|---|---|
+| App settings migration | Yes (automatic) | Yes (automatic) |
+| Metadata export/transform/deploy | Yes (automatic) | Yes (automatic) |
+| Reuse existing dependencies (Storage, Service Bus, App Insights) | Yes (possible if target has access) | Limited (usually requires reconfiguration/new references) |
+| Managed identity and RBAC continuity | Possible, but manual follow-up required | Not direct; manual recreation required |
+| Networking reuse (VNet/private endpoints/NSG/IP restrictions) | Possible, but manual follow-up required | Usually not reusable directly; manual redesign/recreation required |
+| Key Vault reference reuse | Possible if same vault and permissions are available | Usually requires new permissions/references in target subscription |
+| Connection strings to existing resources | Possible with existing reachable resources | Possible only after updating endpoints/permissions as needed |
+| Diagnostic settings and alerts continuity | Possible with manual reattachment | Manual recreation/reattachment required |
+| Custom domains and certificates reuse | Possible with manual binding validation | Manual rebinding/validation required |
+
+### Points to Note
+
+- Same-subscription migration is generally preferred because resource reuse is easier.
+- Different-subscription migration is supported for the app deployment flow, but shared dependencies usually require explicit remapping.
+- If resources are private or identity-protected, validate RBAC and networking after migration.
