@@ -13,8 +13,8 @@ Usage:
         --target-subscription-id <TARGET_SUBSCRIPTION_ID> \
         --source-rg <SOURCE_RG> \
         --source-app <SOURCE_APP_NAME> \
-        --target-rg <TARGET_RG> \
-        --environment-id <MANAGED_ENV_ID>
+        print(f"    --source-subscription-id {source_subscription_id} \\\")
+        print(f"    --target-subscription-id {target_subscription_id} \\\")
 """
 
 import argparse
