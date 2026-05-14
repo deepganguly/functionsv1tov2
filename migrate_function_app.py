@@ -25,6 +25,45 @@ from azure.mgmt.resource import ResourceManagementClient
 from azure.mgmt.web import WebSiteManagementClient
 from azure.core.exceptions import ResourceNotFoundError
 
+
+def _sanitize_container_name(name):
+    sanitized = "".join(ch.lower() if ch.isalnum() else "-" for ch in name)
+    sanitized = sanitized.strip("-")
+    return (sanitized or "app")[:32]
+
+
+def _extract_image_from_linux_fx(linux_fx_version, fallback_image):
+    if not linux_fx_version:
+        return fallback_image
+    prefix = "DOCKER|"
+    if linux_fx_version.upper().startswith(prefix):
+        return linux_fx_version[len(prefix):]
+    return linux_fx_version
+
+
+def _split_env_and_secrets(app_settings):
+    secret_indicators = ["secret", "password", "token", "key", "connection", "connstr"]
+    env_vars = []
+    secrets = []
+
+    for entry in app_settings:
+        name = entry.get("name")
+        value = entry.get("value")
+        if not name:
+            continue
+
+        lowered = name.lower()
+        is_secret = any(marker in lowered for marker in secret_indicators)
+
+        if is_secret:
+            secret_name = _sanitize_container_name(name)
+            secrets.append({"name": secret_name, "value": "" if value is None else str(value)})
+            env_vars.append({"name": name, "secretRef": secret_name})
+        else:
+            env_vars.append({"name": name, "value": "" if value is None else str(value)})
+
+    return env_vars, secrets
+
 def export_v1_metadata(subscription_id, resource_group, app_name):
     """Export v1 Function App metadata."""
     print(f"\n[Step 1] Exporting v1 metadata from {app_name}...")
@@ -71,13 +110,12 @@ def transform_to_v2(v1_metadata, target_app_name=None, target_location=None):
     """Transform v1 metadata to v2 format."""
     print(f"\n[Step 2] Transforming metadata to v2 format...")
 
-    source_kind = (v1_metadata.get("kind") or "").lower()
-    target_kind = v1_metadata.get("kind") if "azurecontainerapps" in source_kind else "functionapp"
+    target_kind = "functionapp"
 
     v2_metadata = {
         "name": target_app_name or v1_metadata["name"],
         "location": target_location or v1_metadata["location"],
-        "kind": target_kind,
+            "kind": target_kind,
         "managed_by": "Microsoft.App",
         "tags": v1_metadata.get("tags", {}),
         "properties": {
@@ -162,61 +200,65 @@ def save_metadata(metadata, filename):
     print(f"✓ Saved to {filename}")
 
 def deploy_v2_function_app(subscription_id, resource_group, target_app_name, v2_metadata, environment_id=None):
-    """Deploy v2 Function App."""
+    """Deploy v2 Function App using Microsoft.App/containerApps RP."""
     print(f"\n[Step 3] Deploying v2 Function App...")
 
     try:
         credential = DefaultAzureCredential()
-        web_client = WebSiteManagementClient(credential, subscription_id)
+        resource_client = ResourceManagementClient(credential, subscription_id)
 
         site_config = v2_metadata["properties"]["site_config"]
-        
-        linux_fx_version = site_config.get("linux_fx_version")
-        if not linux_fx_version:
-            linux_fx_version = f"DOCKER|{v2_metadata.get('deployment_properties', {}).get('container_image', 'mcr.microsoft.com/azure-functions/node:4-node18')}"
+        fallback_image = v2_metadata.get("deployment_properties", {}).get("container_image", "mcr.microsoft.com/azure-functions/node:4-node18")
+        image = _extract_image_from_linux_fx(site_config.get("linux_fx_version"), fallback_image)
+        app_settings = site_config.get("app_settings", [])
+        env_vars, secrets = _split_env_and_secrets(app_settings)
 
-        properties = {
-            "managedEnvironmentId": environment_id,
-            "siteConfig": {
-                "linuxFxVersion": linux_fx_version,
+        container_app_body = {
+            "location": v2_metadata["location"],
+            "kind": "functionapp",
+            "tags": v2_metadata.get("tags", {}),
+            "properties": {
+                "managedEnvironmentId": environment_id,
+                "configuration": {
+                    "activeRevisionsMode": "Single",
+                    "secrets": secrets,
+                },
+                "template": {
+                    "containers": [
+                        {
+                            "name": _sanitize_container_name(target_app_name),
+                            "image": image,
+                            "env": env_vars,
+                        }
+                    ],
+                    "scale": {
+                        "minReplicas": 0,
+                        "maxReplicas": 10,
+                    }
+                }
             }
         }
 
-        if v2_metadata["properties"].get("server_farm_id"):
-            properties["serverFarmId"] = v2_metadata["properties"]["server_farm_id"]
-
-        site_envelope = {
-            "location": v2_metadata["location"],
-            "kind": v2_metadata["kind"],
-            "tags": v2_metadata.get("tags", {}),
-            "properties": properties
-        }
-
-        poller = web_client.web_apps.begin_create_or_update(
+        poller = resource_client.resources.begin_create_or_update(
             resource_group_name=resource_group,
-            name=target_app_name,
-            site_envelope=site_envelope
+            resource_provider_namespace="Microsoft.App",
+            parent_resource_path="",
+            resource_type="containerApps",
+            resource_name=target_app_name,
+            api_version="2025-07-01",
+            parameters=container_app_body,
         )
         result = poller.result()
 
         print(f"✓ v2 Function App deployed successfully!")
         print(f"  - Resource ID: {result.id}")
-        print(f"  - Default hostname: {result.default_host_name}")
-
-        # Apply app settings
-        app_settings = site_config.get("app_settings", [])
-        if app_settings:
-            print(f"\n[Step 4] Applying {len(app_settings)} app settings...")
-            settings_dict = {"properties": {}}
-            for setting in app_settings:
-                settings_dict["properties"][setting["name"]] = setting["value"]
-            
-            web_client.web_apps.update_application_settings(
-                resource_group_name=resource_group,
-                name=target_app_name,
-                app_settings=settings_dict
-            )
-            print(f"✓ App settings applied")
+        result_dict = result.as_dict() if hasattr(result, "as_dict") and result is not None else {}
+        properties = result_dict.get("properties", {}) or {}
+        configuration = properties.get("configuration") or {}
+        ingress = configuration.get("ingress") or {}
+        fqdn = ingress.get("fqdn")
+        if fqdn:
+            print(f"  - FQDN: {fqdn}")
 
         return result
 
