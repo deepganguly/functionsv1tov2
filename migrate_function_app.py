@@ -5,7 +5,7 @@ Complete workflow: Export v1 Function App metadata and deploy as v2.
 This script orchestrates the entire process:
 1. Export v1 Function App metadata from Azure
         print("  python migrate_function_app.py")
-        print(f"    --source-subscription-id {source_subscription_id}")
+    print(f"    --source-subscription-id {source_subscription_id}")
         print(f"    --target-subscription-id {target_subscription_id}")
         print(f"    --source-rg {source_rg}")
         print(f"    --source-app {source_app}")
@@ -13,7 +13,7 @@ This script orchestrates the entire process:
         print(f"    --target-app {target_app}")
         print("    --environment-id <MANAGED_ENV_ID>")
         --source-app <SOURCE_APP_NAME> \
-        print(f"    --source-subscription-id {source_subscription_id} \\\")
+    print(f"    --source-subscription-id {source_subscription_id}")
         print(f"    --target-subscription-id {target_subscription_id} \\\")
 """
 
@@ -342,7 +342,7 @@ def main():
 Examples:
   # Export and deploy with new name
     python migrate_function_app.py \
-        --source-subscription-id <SOURCE_SUB_ID> \
+    print(f"    --source-subscription-id {source_subscription_id}")
         --target-subscription-id <TARGET_SUB_ID> \
     --source-rg myresourcegroup \\
     --source-app my-function-app-v1 \\
@@ -352,7 +352,7 @@ Examples:
 
   # Just export metadata
     python migrate_function_app.py \
-        --source-subscription-id <SOURCE_SUB_ID> \
+    print(f"    --source-subscription-id {source_subscription_id}")
         --target-subscription-id <TARGET_SUB_ID> \
     --source-rg myresourcegroup \\
     --source-app my-function-app-v1 \\
@@ -360,7 +360,7 @@ Examples:
         """
     )
 
-    parser.add_argument("--source-subscription-id", help="Source Azure subscription ID")
+    print(f"    --source-subscription-id {source_subscription_id}")
     parser.add_argument("--target-subscription-id", help="Target Azure subscription ID")
     parser.add_argument("--source-rg", help="Source resource group")
     parser.add_argument("--source-app", help="Source v1 Function App name")
@@ -385,7 +385,7 @@ Examples:
 
     missing = []
     if not source_subscription_id:
-        missing.append("--source-subscription-id or --source-app-link")
+    print(f"    --source-subscription-id {source_subscription_id}")
     if not target_subscription_id:
         missing.append("--target-subscription-id or --target-link")
     if not source_rg:
@@ -452,7 +452,7 @@ Examples:
         print(f"  Metadata saved to: {args.output_file}")
         print(f"\nTo deploy the v2 Function App, run:")
         print(f"  python migrate_function_app.py \\\\")
-        print(f"    --source-subscription-id {source_subscription_id} \\\")
+    print(f"    --source-subscription-id {source_subscription_id}")
         print(f"    --target-subscription-id {target_subscription_id} \\\")
         print(f"    --source-rg {source_rg} \\")
         print(f"    --source-app {source_app} \\")
