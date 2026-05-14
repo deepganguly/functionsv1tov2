@@ -94,3 +94,14 @@ This tool is a metadata migration helper, not a full infrastructure clone.
 
 - External dependencies (storage accounts, service bus, event hubs, databases, app insights resource wiring) are not recreated.
 - The migrated app assumes those dependencies already exist and are reachable from the target environment.
+
+## Points to Note
+
+For same-subscription migrations, the following configurations and resources can be preserved or reused:
+
+- **Identity**: Managed identity assignments and RBAC roles are preserved, avoiding the need for reconfiguration.
+- **Networking**: VNet integrations, private endpoints, IP restrictions, and NSGs remain intact, ensuring seamless connectivity.
+- **Key Vault References**: Key Vault references can be reused if the Key Vault exists in the same subscription and the target app has the necessary access permissions.
+- **Connection Strings**: Connection strings can be reused if the referenced resources (e.g., databases, storage accounts) are in the same subscription and accessible from the target environment.
+- **Diagnostic Settings and Alerts**: Diagnostic settings and alerts can be preserved if the monitoring resources (e.g., Log Analytics workspace, Application Insights) are in the same subscription.
+- **Custom Domains and Certificates**: Custom domains and certificates can be reused if the DNS and certificate resources are managed within the same subscription.
