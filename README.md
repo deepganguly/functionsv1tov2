@@ -19,7 +19,7 @@ Use the same style you shared:
 python migrate_function_app.py \
   --source-app-link "https://ms.portal.azure.com/#@microsoft.onmicrosoft.com/resource/subscriptions/<SOURCE_SUB>/resourceGroups/<SOURCE_RG>/providers/Microsoft.Web/sites/<SOURCE_APP>/appServices" \
   --target-link "https://ms.portal.azure.com/#@microsoft.onmicrosoft.com/resource/subscriptions/<TARGET_SUB>/resourceGroups/<TARGET_RG>/overview" \
-  --target-app myfunctionapp14may1108am
+  --target-app funcacav1-v2-prod-eus
 ```
 
 What the script auto-resolves from links:
@@ -41,7 +41,7 @@ python migrate_function_app.py \
   --source-app <SOURCE_APP> \
   --target-subscription-id <TARGET_SUB> \
   --target-rg <TARGET_RG> \
-  --target-app myfunctionapp14may1108am \
+  --target-app funcacav1-v2-prod-eus \
   --environment-id /subscriptions/<TARGET_SUB>/resourceGroups/<TARGET_RG>/providers/Microsoft.App/managedEnvironments/<ENV_NAME>
 ```
 
