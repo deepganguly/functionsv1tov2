@@ -341,6 +341,63 @@ def deploy_v2_function_app(subscription_id, resource_group, target_app_name, v2_
         print(f"✗ Error deploying Function App: {e}")
         sys.exit(1)
 
+def discover_existing_resources(subscription_id, resource_group):
+    """Discover existing resources in the same subscription and resource group."""
+    credential = DefaultAzureCredential()
+    resource_client = ResourceManagementClient(credential, subscription_id)
+
+    resources = {
+        "storage_accounts": [],
+        "app_insights": [],
+        "service_bus": [],
+        "vnets": []
+    }
+
+    for resource in resource_client.resources.list_by_resource_group(resource_group):
+        resource_type = resource.type.lower()
+        if "microsoft.storage/storageaccounts" in resource_type:
+            resources["storage_accounts"].append(resource)
+        elif "microsoft.insights/components" in resource_type:
+            resources["app_insights"].append(resource)
+        elif "microsoft.servicebus/namespaces" in resource_type:
+            resources["service_bus"].append(resource)
+        elif "microsoft.network/virtualnetworks" in resource_type:
+            resources["vnets"].append(resource)
+
+    return resources
+
+
+def replay_identity_and_rbac(subscription_id, resource_group, app_name, target_app_id):
+    """Replay managed identity and RBAC roles."""
+    credential = DefaultAzureCredential()
+    resource_client = ResourceManagementClient(credential, subscription_id)
+
+    # Fetch existing role assignments
+    role_assignments = resource_client.role_assignments.list_for_scope(
+        f"/subscriptions/{subscription_id}/resourceGroups/{resource_group}/providers/Microsoft.Web/sites/{app_name}"
+    )
+
+    # Reapply roles to the new app
+    for assignment in role_assignments:
+        resource_client.role_assignments.create(
+            scope=f"/subscriptions/{subscription_id}/resourceGroups/{resource_group}/providers/Microsoft.App/containerApps/{target_app_id}",
+            role_assignment_name=assignment.name,
+            parameters={
+                "properties": {
+                    "roleDefinitionId": assignment.role_definition_id,
+                    "principalId": assignment.principal_id,
+                }
+            }
+        )
+
+
+def reuse_network_references(v2_metadata, existing_vnets):
+    """Reuse existing VNet and subnet references."""
+    if existing_vnets:
+        v2_metadata["properties"]["virtualNetworkConfiguration"] = {
+            "subnetResourceId": existing_vnets[0].id  # Use the first VNet as an example
+        }
+
 def main():
     parser = argparse.ArgumentParser(
         description="Migrate Function App from v1 to v2",
