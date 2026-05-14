@@ -19,6 +19,7 @@ Usage:
 
 import argparse
 import json
+import re
 import sys
 from azure.identity import DefaultAzureCredential
 from azure.mgmt.resource import ResourceManagementClient
@@ -39,6 +40,48 @@ def _extract_image_from_linux_fx(linux_fx_version, fallback_image):
     if linux_fx_version.upper().startswith(prefix):
         return linux_fx_version[len(prefix):]
     return linux_fx_version
+
+
+def _parse_azure_resource_from_link(link):
+    if not link:
+        return {}
+
+    pattern = r"/subscriptions/([^/]+)/resourceGroups/([^/]+)(?:/providers/([^/]+)/([^/]+)/([^/?#]+))?"
+    match = re.search(pattern, link, re.IGNORECASE)
+    if not match:
+        return {}
+
+    subscription_id = match.group(1)
+    resource_group = match.group(2)
+    provider = match.group(3)
+    resource_type = match.group(4)
+    resource_name = match.group(5)
+
+    return {
+        "subscription_id": subscription_id,
+        "resource_group": resource_group,
+        "provider": provider,
+        "resource_type": resource_type,
+        "resource_name": resource_name,
+    }
+
+
+def _discover_environment_id(subscription_id, resource_group):
+    credential = DefaultAzureCredential()
+    resource_client = ResourceManagementClient(credential, subscription_id)
+
+    try:
+        envs = []
+        for resource in resource_client.resources.list_by_resource_group(resource_group):
+            if str(getattr(resource, "type", "")).lower() == "microsoft.app/managedenvironments":
+                envs.append(resource.id)
+
+        if len(envs) == 1:
+            return envs[0]
+    except Exception:
+        return None
+
+    return None
 
 
 def _split_env_and_secrets(app_settings):
@@ -88,6 +131,9 @@ def export_v1_metadata(subscription_id, resource_group, app_name):
             "managed_by": getattr(app, "managed_by", None),
             "tags": app.tags or {},
             "properties": {
+                "default_host_name": getattr(app, "default_host_name", None),
+                "https_only": getattr(app, "https_only", None),
+                "public_network_access": getattr(app, "public_network_access", None),
                 "server_farm_id": app.server_farm_id,
                 "reserved": app.reserved,
                 "is_xenon": app.is_xenon,
@@ -112,6 +158,14 @@ def transform_to_v2(v1_metadata, target_app_name=None, target_location=None):
 
     target_kind = "functionapp"
 
+    source_default_host = v1_metadata.get("properties", {}).get("default_host_name")
+    source_public_network_access = (
+        (v1_metadata.get("properties", {}).get("public_network_access") or "").strip().lower()
+    )
+    # App Service defaults to internet-exposed hostnames. Preserve that behavior unless
+    # source explicitly indicates disabled public network access.
+    enable_external_ingress = bool(source_default_host) and source_public_network_access != "disabled"
+
     v2_metadata = {
         "name": target_app_name or v1_metadata["name"],
         "location": target_location or v1_metadata["location"],
@@ -127,7 +181,13 @@ def transform_to_v2(v1_metadata, target_app_name=None, target_location=None):
         },
         "deployment_properties": {
             "container_image": "mcr.microsoft.com/azure-functions/node:4-node18",
-            "workload_profile_name": "Consumption"
+            "workload_profile_name": "Consumption",
+            "ingress": {
+                "external": enable_external_ingress,
+                "target_port": 80,
+                "allow_insecure": False,
+                "transport": "auto",
+            },
         }
     }
 
@@ -212,6 +272,13 @@ def deploy_v2_function_app(subscription_id, resource_group, target_app_name, v2_
         image = _extract_image_from_linux_fx(site_config.get("linux_fx_version"), fallback_image)
         app_settings = site_config.get("app_settings", [])
         env_vars, secrets = _split_env_and_secrets(app_settings)
+        ingress_cfg = (v2_metadata.get("deployment_properties", {}) or {}).get("ingress", {}) or {}
+        ingress = {
+            "external": bool(ingress_cfg.get("external", False)),
+            "targetPort": int(ingress_cfg.get("target_port", 80)),
+            "allowInsecure": bool(ingress_cfg.get("allow_insecure", False)),
+            "transport": ingress_cfg.get("transport", "auto"),
+        }
 
         container_app_body = {
             "location": v2_metadata["location"],
@@ -222,6 +289,7 @@ def deploy_v2_function_app(subscription_id, resource_group, target_app_name, v2_
                 "configuration": {
                     "activeRevisionsMode": "Single",
                     "secrets": secrets,
+                    "ingress": ingress,
                 },
                 "template": {
                     "containers": [
@@ -292,32 +360,62 @@ Examples:
         """
     )
 
-    parser.add_argument("--source-subscription-id", required=True, help="Source Azure subscription ID")
-    parser.add_argument("--target-subscription-id", required=True, help="Target Azure subscription ID")
-    parser.add_argument("--source-rg", required=True, help="Source resource group")
-    parser.add_argument("--source-app", required=True, help="Source v1 Function App name")
+    parser.add_argument("--source-subscription-id", help="Source Azure subscription ID")
+    parser.add_argument("--target-subscription-id", help="Target Azure subscription ID")
+    parser.add_argument("--source-rg", help="Source resource group")
+    parser.add_argument("--source-app", help="Source v1 Function App name")
     parser.add_argument("--target-rg", help="Target resource group for v2 (default: same as source)")
     parser.add_argument("--target-app", help="Target v2 Function App name (default: append '-v2')")
     parser.add_argument("--environment-id", help="Container Apps managed environment ID (required for v2 deployment)")
+    parser.add_argument("--source-app-link", help="Azure portal/app resource link for source Function App")
+    parser.add_argument("--target-link", help="Azure portal link under the target subscription/resource group")
     parser.add_argument("--export-only", action="store_true", help="Only export metadata, don't deploy")
     parser.add_argument("--output-file", default="v2_metadata.json", help="Output metadata file")
 
     args = parser.parse_args()
 
+    source_link_parts = _parse_azure_resource_from_link(args.source_app_link)
+    target_link_parts = _parse_azure_resource_from_link(args.target_link)
+
+    source_subscription_id = args.source_subscription_id or source_link_parts.get("subscription_id")
+    source_rg = args.source_rg or source_link_parts.get("resource_group")
+    source_app = args.source_app or source_link_parts.get("resource_name")
+    target_subscription_id = args.target_subscription_id or target_link_parts.get("subscription_id")
+    target_rg = args.target_rg or target_link_parts.get("resource_group") or source_rg
+
+    missing = []
+    if not source_subscription_id:
+        missing.append("--source-subscription-id or --source-app-link")
+    if not target_subscription_id:
+        missing.append("--target-subscription-id or --target-link")
+    if not source_rg:
+        missing.append("--source-rg or --source-app-link")
+    if not source_app:
+        missing.append("--source-app or --source-app-link")
+    if missing:
+        print("\n✗ Missing required inputs:")
+        for item in missing:
+            print(f"  - {item}")
+        sys.exit(1)
+
     # Set defaults
-    target_rg = args.target_rg or args.source_rg
-    target_app = args.target_app or f"{args.source_app}-v2"
+    target_app = args.target_app or f"{source_app}-v2"
+    environment_id = args.environment_id
+    if not args.export_only and not environment_id:
+        environment_id = _discover_environment_id(target_subscription_id, target_rg)
+        if environment_id:
+            print(f"\n[Step 0] Auto-discovered environment-id: {environment_id}")
 
     print("=" * 70)
     print("Azure Function App v1 → v2 Migration Workflow")
     print("=" * 70)
 
     # Step 1: Export v1 metadata
-    v1_metadata = export_v1_metadata(args.source_subscription_id, args.source_rg, args.source_app)
+    v1_metadata = export_v1_metadata(source_subscription_id, source_rg, source_app)
 
     target_location = None
-    if not args.export_only and args.environment_id:
-        target_location = get_managed_environment_location(args.target_subscription_id, args.environment_id)
+    if not args.export_only and environment_id:
+        target_location = get_managed_environment_location(target_subscription_id, environment_id)
         if target_location:
             print(f"\n[Step 1b] Target managed environment location: {target_location}")
 
@@ -330,21 +428,21 @@ Examples:
 
     # Step 3: Deploy (if not export-only)
     if not args.export_only:
-        if not args.environment_id:
+        if not environment_id:
             print("\n✗ --environment-id is required for deployment")
             sys.exit(1)
 
         deploy_v2_function_app(
-            args.target_subscription_id,
+            target_subscription_id,
             target_rg,
             target_app,
             v2_metadata,
-            args.environment_id
+            environment_id
         )
 
         print("\n" + "=" * 70)
         print(f"✓ Migration complete!")
-        print(f"  Source (v1): {args.source_app} in {args.source_rg}")
+        print(f"  Source (v1): {source_app} in {source_rg}")
         print(f"  Target (v2): {target_app} in {target_rg}")
         print(f"  Metadata saved to: {args.output_file}")
         print("=" * 70)
@@ -354,10 +452,10 @@ Examples:
         print(f"  Metadata saved to: {args.output_file}")
         print(f"\nTo deploy the v2 Function App, run:")
         print(f"  python migrate_function_app.py \\\\")
-        print(f"    --source-subscription-id {args.source_subscription_id} \\\\")
-        print(f"    --target-subscription-id {args.target_subscription_id} \\\\")
-        print(f"    --source-rg {args.source_rg} \\")
-        print(f"    --source-app {args.source_app} \\")
+        print(f"    --source-subscription-id {source_subscription_id} \\\")
+        print(f"    --target-subscription-id {target_subscription_id} \\\")
+        print(f"    --source-rg {source_rg} \\")
+        print(f"    --source-app {source_app} \\")
         print(f"    --target-rg {target_rg} \\")
         print(f"    --target-app {target_app} \\")
         print(f"    --environment-id <MANAGED_ENV_ID> \\")
