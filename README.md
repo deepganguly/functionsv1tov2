@@ -51,6 +51,13 @@ python migrate_function_app.py \
 - Preserves app settings.
 - Preserves ingress behavior by enabling external ingress when source app is publicly reachable.
 
+## Advantages of Same-Subscription Migrations
+
+- **Dependency Reuse**: Existing resources such as storage accounts, service bus, and app insights can be reused without additional configuration.
+- **Identity and RBAC**: Managed identities and role assignments are preserved, reducing manual intervention.
+- **Networking**: VNet integrations and private endpoints remain intact, ensuring seamless connectivity.
+- **Cost Efficiency**: Avoids duplication of resources, leading to reduced operational costs.
+
 ## Caveats: What Is Not Fully Cloned
 
 This tool is a metadata migration helper, not a full infrastructure clone.
