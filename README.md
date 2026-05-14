@@ -50,3 +50,40 @@ python migrate_function_app.py \
 - Deploys to `Microsoft.App/containerApps` with `kind=functionapp`.
 - Preserves app settings.
 - Preserves ingress behavior by enabling external ingress when source app is publicly reachable.
+
+## Caveats: What Is Not Fully Cloned
+
+This tool is a metadata migration helper, not a full infrastructure clone.
+
+### Cloned Today
+
+- Basic app metadata: name, location alignment, tags.
+- App settings: exported from source and applied to target.
+- Ingress default behavior: external ingress enabled when source app appears publicly reachable.
+
+### Not Fully Cloned (Manual Follow-up Required)
+
+- Scale rules: only default scale is set (`minReplicas=0`, `maxReplicas=10`).
+- KEDA/custom scale triggers: not copied.
+- Dapr settings: not copied (`dapr.enabled`, appId, components, pub/sub bindings).
+- Identity: managed identity assignments and RBAC are not copied.
+- Networking: VNet integration, private endpoints, IP restrictions, NSGs are not copied.
+- AuthN/AuthZ: App Service auth settings (EasyAuth) are not migrated.
+- Custom domains and certificates: not copied.
+- Connection strings object: App Service connection strings are not exported as a dedicated section.
+- Key Vault references: not converted to target secret references automatically.
+- Deployment artifacts/code package: function code content is not cloned from source site filesystem.
+- Slots and slot-specific settings: not migrated.
+- Diagnostic settings and alerts: not cloned.
+
+### Secrets Behavior
+
+- App settings with names containing `secret`, `password`, `token`, `key`, `connection`, or `connstr` are converted to Container Apps secrets.
+- Other app settings are stored as plain environment variables.
+- Secret names are sanitized and truncated for Container Apps naming rules; review for collisions in edge cases.
+- If you use Key Vault-backed references, reconfigure them explicitly after migration.
+
+### Dependencies Caveat
+
+- External dependencies (storage accounts, service bus, event hubs, databases, app insights resource wiring) are not recreated.
+- The migrated app assumes those dependencies already exist and are reachable from the target environment.
