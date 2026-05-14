@@ -4,15 +4,24 @@ Complete workflow: Export v1 Function App metadata and deploy as v2.
 
 This script orchestrates the entire process:
 1. Export v1 Function App metadata from Azure
-        print("  python migrate_function_app.py")
-        print(f"    --target-subscription-id {target_subscription_id}")
-        print(f"    --source-rg {source_rg}")
-        print(f"    --source-app {source_app}")
-        print(f"    --target-rg {target_rg}")
-        print(f"    --target-app {target_app}")
-        print("    --environment-id <MANAGED_ENV_ID>")
+2. Transform it to v2-compatible format
+3. Deploy the v2 Function App
+
+Usage (explicit IDs):
+    python migrate_function_app.py \
+        --source-subscription-id <SOURCE_SUBSCRIPTION_ID> \
+        --source-rg <SOURCE_RG> \
         --source-app <SOURCE_APP_NAME> \
-        print(f"    --target-subscription-id {target_subscription_id} \\\")
+        --target-subscription-id <TARGET_SUBSCRIPTION_ID> \
+        --target-rg <TARGET_RG> \
+        --target-app <TARGET_APP_NAME> \
+        --environment-id <MANAGED_ENV_ID>
+
+Usage (portal links):
+    python migrate_function_app.py \
+        --source-app-link "https://ms.portal.azure.com/.../providers/Microsoft.Web/sites/<SOURCE_APP>/appServices" \
+        --target-link "https://ms.portal.azure.com/.../resourceGroups/<TARGET_RG>/overview" \
+        --target-app <TARGET_APP_NAME>
 """
 
 import argparse
@@ -338,21 +347,28 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Export and deploy with new name
+    # Migrate using explicit arguments
     python migrate_function_app.py \
+                --source-subscription-id <SOURCE_SUB_ID> \
         --target-subscription-id <TARGET_SUB_ID> \
-    --source-rg myresourcegroup \\
-    --source-app my-function-app-v1 \\
-    --target-rg myresourcegroup \\
-    --environment-id /subscriptions/.../managedEnvironments/myenv \\
-    --target-app my-function-app-v2
+                --source-rg myresourcegroup \
+                --source-app my-function-app-v1 \
+                --target-rg myresourcegroup \
+                --environment-id /subscriptions/.../managedEnvironments/myenv \
+                --target-app my-function-app-v2
 
-  # Just export metadata
+    # Migrate using portal links
     python migrate_function_app.py \
-        --target-subscription-id <TARGET_SUB_ID> \
-    --source-rg myresourcegroup \\
-    --source-app my-function-app-v1 \\
-    --export-only
+                --source-app-link "https://ms.portal.azure.com/.../providers/Microsoft.Web/sites/my-function-app-v1/appServices" \
+                --target-link "https://ms.portal.azure.com/.../resourceGroups/myresourcegroup/overview" \
+                --target-app my-function-app-v2
+
+    # Just export metadata
+        python migrate_function_app.py \
+                --source-subscription-id <SOURCE_SUB_ID> \
+                --source-rg myresourcegroup \
+                --source-app my-function-app-v1 \
+                --export-only
         """
     )
 
