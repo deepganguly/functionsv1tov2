@@ -1,6 +1,30 @@
-# Azure Function App v1 -> v2 Migration Tool
+# Azure Function App v1 → v2 Migration Tool
 
-Simple flow: pass Azure Portal links, app name, and run.
+## Problem
+
+Azure Functions v1 (hosted on App Service / `Microsoft.Web/sites`) is approaching end-of-life. Teams need to migrate these function apps to the newer **Azure Functions on Azure Container Apps** (`Microsoft.App/containerApps` with `kind=functionapp`) — referred to here as "v2".
+
+Doing this manually is painful:
+
+- You must export the existing app's metadata, app settings, and site configuration.
+- App settings contain secrets and connection strings that need to be mapped to Container Apps secrets.
+- The resource model changes entirely — from `Microsoft.Web/sites` to `Microsoft.App/containerApps` — so you can't simply redeploy.
+- Ingress, networking, identity, and RBAC don't carry over automatically.
+- Different subscriptions, resource groups, or regions add further complexity.
+
+There is no first-party tooling today that handles this end-to-end.
+
+## What This Tool Does
+
+This tool automates the migration workflow:
+
+1. **Exports** the v1 Function App metadata and app settings from Azure (via the ARM SDK).
+2. **Transforms** the metadata to the v2-compatible shape — updates `kind`, `managed_by`, runtime versions, and maps app settings into Container Apps environment variables and secrets.
+3. **Deploys** the new v2 Function App as a `Microsoft.App/containerApps` resource with `kind=functionapp` on an existing managed environment.
+
+It accepts Azure Portal resource links directly (the same URLs you copy from the portal), auto-discovers the target managed environment, and preserves ingress behavior based on the source app's public network access settings.
+
+---
 
 ## 1) Install
 
