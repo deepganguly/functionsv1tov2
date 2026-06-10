@@ -91,6 +91,66 @@ def _discover_environment_id(subscription_id, resource_group):
     return None
 
 
+def _detect_vnet_integration(web_client, resource_group, app_name):
+    """Detect VNet integration on a v1 Function App.
+
+    Returns a dict with subnet info if VNet-integrated, else None.
+    Container Apps handle VNet at the managed-environment level, so this info
+    is used to warn the user and validate the target environment.
+    """
+    # Check regional VNet integration (swift connection)
+    try:
+        swift = web_client.web_apps.get_swift_virtual_network_connection(resource_group, app_name)
+        subnet_id = getattr(swift, "subnet_resource_id", None)
+        if subnet_id:
+            return {
+                "type": "regional",
+                "subnet_resource_id": subnet_id,
+                "vnet_route_all_enabled": getattr(swift, "swift_supported", None),
+            }
+    except Exception:
+        pass
+
+    # Check gateway-required VNet integration (legacy)
+    try:
+        connections = web_client.web_apps.list_vnet_connections(resource_group, app_name)
+        for conn in connections:
+            vnet_id = getattr(conn, "vnet_resource_id", None)
+            if vnet_id:
+                return {
+                    "type": "gateway",
+                    "vnet_resource_id": vnet_id,
+                    "cert_thumbprint": getattr(conn, "cert_thumbprint", None),
+                }
+    except Exception:
+        pass
+
+    return None
+
+
+def _check_environment_vnet(subscription_id, environment_id):
+    """Check if a managed environment is deployed into a VNet."""
+    credential = DefaultAzureCredential()
+    resource_client = ResourceManagementClient(credential, subscription_id)
+
+    for api_version in ["2024-03-01", "2023-05-01"]:
+        try:
+            resource = resource_client.resources.get_by_id(environment_id, api_version)
+            resource_dict = resource.as_dict() if hasattr(resource, "as_dict") else {}
+            properties = resource_dict.get("properties", {}) or {}
+            vnet_config = properties.get("vnetConfiguration") or {}
+            infra_subnet = vnet_config.get("infrastructureSubnetId")
+            return {
+                "has_vnet": bool(infra_subnet),
+                "infrastructure_subnet_id": infra_subnet,
+                "internal": vnet_config.get("internal", False),
+            }
+        except Exception:
+            continue
+
+    return {"has_vnet": False, "infrastructure_subnet_id": None, "internal": False}
+
+
 def _split_env_and_secrets(app_settings):
     secret_indicators = ["secret", "password", "token", "key", "connection", "connstr"]
     env_vars = []
@@ -131,6 +191,9 @@ def export_v1_metadata(subscription_id, resource_group, app_name):
         site_config = app.site_config.as_dict() if app.site_config else {}
         site_config["app_settings"] = app_settings
 
+        # Detect VNet integration
+        vnet_info = _detect_vnet_integration(client, resource_group, app_name)
+
         v1_metadata = {
             "name": app.name,
             "location": app.location,
@@ -146,10 +209,13 @@ def export_v1_metadata(subscription_id, resource_group, app_name):
                 "is_xenon": app.is_xenon,
                 "hyper_v": app.hyper_v,
                 "site_config": site_config,
+                "vnet_integration": vnet_info,
             },
         }
 
         print(f"✓ Exported metadata for {app_name}")
+        if vnet_info:
+            print(f"  ⚠ VNet integration detected: {vnet_info.get('subnet_resource_id', 'unknown')}")
         return v1_metadata
 
     except ResourceNotFoundError:
@@ -486,6 +552,21 @@ Examples:
         target_location = get_managed_environment_location(target_subscription_id, environment_id)
         if target_location:
             print(f"\n[Step 1b] Target managed environment location: {target_location}")
+
+        # VNet compatibility check
+        vnet_info = v1_metadata.get("properties", {}).get("vnet_integration")
+        if vnet_info:
+            env_vnet = _check_environment_vnet(target_subscription_id, environment_id)
+            if env_vnet["has_vnet"]:
+                print(f"\n[Step 1c] VNet check: ✓ Target environment is VNet-integrated")
+                print(f"    Source subnet: {vnet_info.get('subnet_resource_id', 'N/A')}")
+                print(f"    Target infra subnet: {env_vnet['infrastructure_subnet_id']}")
+            else:
+                print(f"\n[Step 1c] VNet check: ⚠ Source app has VNet integration but target")
+                print(f"    environment is NOT in a VNet. Private endpoints and internal")
+                print(f"    resources may not be reachable from the migrated app.")
+                print(f"    Source subnet: {vnet_info.get('subnet_resource_id', 'N/A')}")
+                print(f"    Consider deploying the managed environment into a VNet first.")
 
     # Step 2: Transform to v2
     v2_metadata = transform_to_v2(v1_metadata, target_app, target_location=target_location)

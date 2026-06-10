@@ -1,4 +1,4 @@
-# Azure Function App v1 → v2 Migration Tool
+# Azure Function App v1 → v2 Migration Toolkit
 
 ## Problem
 
@@ -14,15 +14,14 @@ Doing this manually is painful:
 
 There is no first-party tooling today that handles this end-to-end.
 
-## What This Tool Does
+## What This Toolkit Does
 
-This tool automates the migration workflow:
-
-1. **Exports** the v1 Function App metadata and app settings from Azure (via the ARM SDK).
-2. **Transforms** the metadata to the v2-compatible shape — updates `kind`, `managed_by`, runtime versions, and maps app settings into Container Apps environment variables and secrets.
-3. **Deploys** the new v2 Function App as a `Microsoft.App/containerApps` resource with `kind=functionapp` on an existing managed environment.
-
-It accepts Azure Portal resource links directly (the same URLs you copy from the portal), auto-discovers the target managed environment, and preserves ingress behavior based on the source app's public network access settings.
+| Script | Purpose |
+|--------|---------|
+| `inventory.py` | List all v1/v2 function apps, show migration progress %, export CSV |
+| `migrate_function_app.py` | Migrate a single function app (export → transform → deploy) |
+| `bulk_migrate.py` | Run migrations in batch from a CSV plan |
+| `SKILL.md` | Agent skill file for Copilot/Claude orchestration |
 
 ---
 
@@ -33,11 +32,42 @@ pip install -r requirements.txt
 az login
 ```
 
-## 2) Run with links (recommended)
+---
 
-Use the same style you shared:
-- source app link (Microsoft.Web/sites/...)
-- target link (resource group overview is enough)
+## 2) Inventory & Migration Progress
+
+Scan a subscription to find all v1 function apps and check which have been migrated:
+
+```bash
+# List all with progress bar
+python inventory.py --subscription-id <SUB_ID>
+
+# Limit to a resource group
+python inventory.py --subscription-id <SUB_ID> --resource-group <RG>
+
+# Check against a target subscription/RG for v2 counterparts
+python inventory.py --subscription-id <SUB_ID> \
+    --target-subscription-id <TARGET_SUB> --target-rg <TARGET_RG>
+
+# JSON output (for programmatic use / agent orchestration)
+python inventory.py --subscription-id <SUB_ID> --json
+
+# Export CSV for bulk migration planning
+python inventory.py --subscription-id <SUB_ID> --export-csv migration_plan.csv
+```
+
+Sample output:
+
+```
+  Migration Progress: [████████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░] 30.0%
+  Total v1 Apps: 10 | Migrated: 3 | Pending: 7
+```
+
+---
+
+## 3) Single App Migration
+
+### Using Portal links (recommended)
 
 ```bash
 python migrate_function_app.py \
@@ -47,16 +77,13 @@ python migrate_function_app.py \
 ```
 
 What the script auto-resolves from links:
-- Source subscription ID
-- Source resource group
-- Source app name
-- Target subscription ID
-- Target resource group
+- Source subscription ID, resource group, app name
+- Target subscription ID, resource group
 - Managed environment ID (auto if exactly one exists in target resource group)
 
 If more than one managed environment exists, pass `--environment-id` explicitly.
 
-## 3) Optional explicit mode
+### Explicit mode
 
 ```bash
 python migrate_function_app.py \
@@ -69,22 +96,83 @@ python migrate_function_app.py \
   --environment-id /subscriptions/<TARGET_SUB>/resourceGroups/<TARGET_RG>/providers/Microsoft.App/managedEnvironments/<ENV_NAME>
 ```
 
+### Export-only (no deploy)
+
+```bash
+python migrate_function_app.py \
+  --source-subscription-id <SUB> --source-rg <RG> --source-app <APP> \
+  --export-only
+```
+
+---
+
+## 4) Bulk Migration (CSV-driven)
+
+For migrating multiple apps at once:
+
+```bash
+# Step 1: Generate the plan CSV
+python inventory.py --subscription-id <SUB_ID> --export-csv migration_plan.csv
+
+# Step 2: Edit the CSV
+#   Fill in: target_subscription_id, target_resource_group, target_app_name
+#   Optionally: target_environment_id (auto-discovered if omitted)
+
+# Step 3: Dry-run (validate without deploying)
+python bulk_migrate.py --input-csv migration_plan.csv --dry-run
+
+# Step 4: Execute
+python bulk_migrate.py --input-csv migration_plan.csv
+```
+
+The bulk tool prints a live progress bar, tracks success/failure per app, and writes results to `bulk_migration_results.json`.
+
+---
+
+## 5) VNet Handling
+
+The tool automatically detects VNet integration on the source v1 app:
+
+- **Regional VNet integration** (swift connection) — detects the delegated subnet
+- **Gateway-required VNet integration** (legacy) — detects the VNet resource ID
+
+**How Container Apps handle networking:**
+Container Apps manage VNet at the *managed environment* level, not per-app. The migration tool:
+1. Detects if source has VNet integration
+2. Checks if target managed environment is deployed into a VNet
+3. Warns if there's a mismatch (source is VNet-integrated, target env is not)
+
+**Action required:** If your source app uses VNet integration, ensure the target managed environment is deployed into an appropriate subnet *before* running migration.
+
+---
+
+## 6) Agent Orchestration (SKILL.md)
+
+The `SKILL.md` file allows Copilot, Claude, or other AI agents to discover and invoke this toolkit. Agents can:
+
+1. Run `inventory.py --json` to get structured inventory
+2. Export a CSV, validate with `--dry-run`, then execute bulk migration
+3. Re-run inventory to verify progress
+
+For in-process Python orchestration:
+
+```python
+from inventory import list_function_apps, compute_migration_status
+from migrate_function_app import export_v1_metadata, transform_to_v2, deploy_v2_function_app
+```
+
+---
+
 ## Notes
 
-- Deploys to `Microsoft.App/containerApps` with `kind=functionapp`.
-- Preserves app settings.
-- Preserves ingress behavior by enabling external ingress when source app is publicly reachable.
+- Deploys to `Microsoft.App/containerApps` with `kind=functionapp`
+- Preserves app settings (secrets auto-mapped to Container Apps secrets)
+- Preserves ingress behavior based on source public network access
+- Supports same-subscription and cross-subscription migration
 
 ## Same vs Different Subscription: What Is Possible
 
 The script always migrates app metadata and deploys a new target Function App on Azure Container Apps. Other resources depend on migration type.
-
-### Current Script Behavior (Automatic)
-
-- Exports source Function App metadata and app settings.
-- Transforms settings for v2 target shape.
-- Deploys target app as `Microsoft.App/containerApps` with `kind=functionapp`.
-- Preserves ingress default behavior based on source public reachability.
 
 ### Capability Matrix
 
