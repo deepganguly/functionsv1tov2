@@ -2,3 +2,7 @@
 __pycache__/
 *.pyc
 .DS_Store
+
+# Exported metadata (may contain secrets/connection strings)
+*_metadata.json
+sample_export.json
